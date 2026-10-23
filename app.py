@@ -1420,6 +1420,7 @@ with st.sidebar.expander("🔍 全市場雷達掃描"):
                                value=float(max(6, int(dynamic_max_price))), step=1.0)
         price_range = (pmin, pmax if pmax > 0 else float("inf"))
 
+    show_hidden = st.checkbox("顯示被篩走嘅標的(附原因)", value=True)
     only_green = st.checkbox("只顯示 🟢 綠燈標的", value=True)
     use_screen = st.checkbox("📋 套用手冊盤前初篩(90日均量>10M、日線多頭、避開今日財報)", value=True)
     st.caption("掃描一律用 yfinance(避免撞 Alpaca 次數上限)。")
@@ -1450,13 +1451,19 @@ with st.sidebar.expander("🔍 全市場雷達掃描"):
             box.update(label=f"✅ 掃描完成 ({len(ss.scan_results_cache)}/{len(targets)})", state="complete")
 
     if ss.scan_results_cache:
+        hidden = []
         for scan_sym, sd in ss.scan_results_cache.items():
+            reason = None
             if not (price_range[0] <= sd["price"] <= price_range[1]):
+                reason = "價格範圍外"
+            elif use_screen and not sd.get("pass", True):
+                reason = "初篩:" + "、".join(sd.get("why", []))
+            elif only_green and not sd["is_green"]:
+                reason = f"非綠燈({sd['status']})"
+            if reason:
+                hidden.append((scan_sym, sd["price"], reason))
                 continue
-            if use_screen and not sd.get("pass", True):
-                continue
-            if only_green and not sd["is_green"]:
-                continue
+
             tag_color = "#16a34a" if sd["is_green"] else ("#dc2626" if "RED" in sd["status"] else "#d97706")
             tag_text = ("🟢 綠燈" if sd["is_green"] else ("🔴 紅燈" if "RED" in sd["status"] else "🟡 觀察")) \
                 + (" 🔥可狙擊" if sd.get("act") else "")
@@ -1466,6 +1473,11 @@ with st.sidebar.expander("🔍 全市場雷達掃描"):
                             unsafe_allow_html=True)
             with s2:
                 st.button("👉", key=f"scan_go_{scan_sym}", on_click=set_slot, args=(0, scan_sym), use_container_width=True)
+
+        if show_hidden and hidden:
+            st.caption(f"被篩走 {len(hidden)} 隻:")
+            for h_sym, h_px, h_why in hidden:
+                st.caption(f"• {h_sym} ${h_px:.2f} — {h_why}")
         if use_screen:
             st.caption("已套用盤前初篩;yfinance 搵唔到財報日 ≠ 冇財報,開槍前自己再查。")
     else:
@@ -1683,6 +1695,13 @@ def render_daily_context(sym, stats):
     ok = p > d["ma20"] and d["ma20"] > d["ma50"]
     st.caption(f"📅 日K {k}20 ${d['ma20']:.2f} · {k}50 ${d['ma50']:.2f}(截至 {d['date']})｜"
                f"{'✅' if ok else '❌'} 手冊日線多頭共振(價 > {k}20 > {k}50)")
+    if not ok:
+        why = []
+        if p <= d["ma20"]:
+            why.append(f"現價 ${p:.2f} ≤ {k}20 ${d['ma20']:.2f}")
+        if d["ma20"] <= d["ma50"]:
+            why.append(f"{k}20 ${d['ma20']:.2f} ≤ {k}50 ${d['ma50']:.2f}")
+        st.caption("❌ 日線唔過原因:" + ";".join(why))
     if "GREEN" in stats["status"] and not ok:
         st.warning("⚠️ 5 分 K 見綠燈,但日線未符合「價 > 20日線 > 50日線」,手冊盤前初篩會剔走呢隻。"
                    + ("" if k == "SMA" else "(手冊用 SMA,你而家揀咗 EMA,數字可能有出入。)"))
